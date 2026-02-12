@@ -1,0 +1,17 @@
+module pkl_proxy.AppConfig
+
+/// Path to the GitHub App private key file (relative to config directory)
+privateKey: String
+
+/// GitHub App ID (numeric). If set, uses App ID authentication
+/// and auto-discovers installations. Takes precedence over clientId/installationId.
+appId: Int?
+
+/// GitHub App Client ID (required when appId is not set)
+clientId: String?
+
+/// GitHub App Installation ID (required when appId is not set)
+installationId: Int?
+
+/// Listen address for the local proxy server (default: localhost:9443)
+listenAddress: String = "localhost:9443"
