@@ -4,16 +4,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/bmurray/pkl-proxy/gen/appconfig"
 	"github.com/jferrl/go-githubauth"
 	"golang.org/x/oauth2"
 )
 
-// buildTokenSource creates the appropriate oauth2.TokenSource based on config.
-// If installationId is set, it uses it directly. Otherwise, it auto-discovers installations.
-// appId and clientId are both supported for creating the application token.
-func buildTokenSource(config *appconfig.AppConfig, privateKey []byte) (oauth2.TokenSource, error) {
+// TokenManager lazily discovers and caches installation token sources per owner.
+type TokenManager struct {
+	appTokenSource oauth2.TokenSource
+	installationId *int // optional fixed installation ID from config
+
+	mu    sync.RWMutex
+	cache map[string]oauth2.TokenSource // owner -> token source
+}
+
+// NewTokenManager creates a TokenManager from config. If installationId is set,
+// all repos use that installation (no per-repo lookup). Otherwise, installations
+// are auto-discovered per owner on first request.
+func NewTokenManager(config *appconfig.AppConfig, privateKey []byte) (*TokenManager, error) {
 	var appTokenSource oauth2.TokenSource
 	var err error
 
@@ -29,33 +39,106 @@ func buildTokenSource(config *appconfig.AppConfig, privateKey []byte) (oauth2.To
 		return nil, fmt.Errorf("creating application token source: %w", err)
 	}
 
-	// If installationId is explicit, use it directly
-	if config.InstallationId != nil {
-		return githubauth.NewInstallationTokenSource(int64(*config.InstallationId), appTokenSource), nil
+	tm := &TokenManager{
+		appTokenSource: appTokenSource,
+		installationId: config.InstallationId,
+		cache:          make(map[string]oauth2.TokenSource),
 	}
 
-	// Auto-discover installations
+	// Print available installations at startup for diagnostics
 	installations, err := discoverInstallations(appTokenSource)
 	if err != nil {
-		return nil, fmt.Errorf("discovering installations: %w", err)
+		fmt.Printf("Warning: could not list installations: %v\n", err)
+	} else if len(installations) == 0 {
+		fmt.Println("Warning: no installations found; install the GitHub App on an account first")
+	} else {
+		fmt.Println("Available installations:")
+		for _, inst := range installations {
+			fmt.Printf("  - %s (installation ID: %d)\n", inst.Account.Login, inst.ID)
+		}
 	}
 
-	if len(installations) == 0 {
-		return nil, fmt.Errorf("no installations found; install the GitHub App on an account first")
+	return tm, nil
+}
+
+// TokenForRepo returns a token valid for the given owner/repo. Results are cached
+// per owner since installations are typically per-account.
+func (tm *TokenManager) TokenForRepo(owner, repo string) (*oauth2.Token, error) {
+	// If a fixed installation ID is configured, use it for everything
+	if tm.installationId != nil {
+		ts := tm.getOrSetSource(owner, func() oauth2.TokenSource {
+			return githubauth.NewInstallationTokenSource(int64(*tm.installationId), tm.appTokenSource)
+		})
+		return ts.Token()
 	}
 
-	if len(installations) == 1 {
-		inst := installations[0]
-		fmt.Printf("Using installation %d (%s)\n", inst.ID, inst.Account.Login)
-		return githubauth.NewInstallationTokenSource(int64(inst.ID), appTokenSource), nil
+	// Check cache (read lock)
+	tm.mu.RLock()
+	ts, ok := tm.cache[owner]
+	tm.mu.RUnlock()
+	if ok {
+		return ts.Token()
 	}
 
-	// Multiple installations — list them and ask the user to specify
-	fmt.Println("Multiple installations found:")
-	for _, inst := range installations {
-		fmt.Printf("  - %s (installation ID: %d)\n", inst.Account.Login, inst.ID)
+	// Cache miss — look up the installation for this repo
+	installationID, err := tm.lookupRepoInstallation(owner, repo)
+	if err != nil {
+		return nil, fmt.Errorf("looking up installation for %s/%s: %w", owner, repo, err)
 	}
-	return nil, fmt.Errorf("multiple installations found; set installationId in config to select one")
+
+	ts = tm.getOrSetSource(owner, func() oauth2.TokenSource {
+		return githubauth.NewInstallationTokenSource(int64(installationID), tm.appTokenSource)
+	})
+	return ts.Token()
+}
+
+// getOrSetSource returns the cached token source for owner, or creates one using
+// the provided factory function. Handles the race where two goroutines both miss
+// the read cache concurrently.
+func (tm *TokenManager) getOrSetSource(owner string, factory func() oauth2.TokenSource) oauth2.TokenSource {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	if ts, ok := tm.cache[owner]; ok {
+		return ts
+	}
+	ts := factory()
+	tm.cache[owner] = ts
+	return ts
+}
+
+// lookupRepoInstallation calls GET /repos/{owner}/{repo}/installation to find
+// the installation ID covering a specific repo.
+func (tm *TokenManager) lookupRepoInstallation(owner, repo string) (int, error) {
+	token, err := tm.appTokenSource.Token()
+	if err != nil {
+		return 0, fmt.Errorf("getting app token: %w", err)
+	}
+
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/installation", owner, repo)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("GitHub API returned %s for %s/%s installation lookup", resp.Status, owner, repo)
+	}
+
+	var inst ghInstallation
+	if err := json.NewDecoder(resp.Body).Decode(&inst); err != nil {
+		return 0, fmt.Errorf("decoding installation response: %w", err)
+	}
+
+	fmt.Printf("Discovered installation %d (%s) for %s/%s\n", inst.ID, inst.Account.Login, owner, repo)
+	return inst.ID, nil
 }
 
 type ghInstallation struct {

@@ -8,9 +8,26 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-
-	"golang.org/x/oauth2"
 )
+
+type repoContextKey struct{}
+
+type repoInfo struct {
+	Owner string
+	Repo  string
+}
+
+func withRepo(ctx context.Context, owner, repo string) context.Context {
+	return context.WithValue(ctx, repoContextKey{}, repoInfo{Owner: owner, Repo: repo})
+}
+
+func repoFromContext(ctx context.Context) (owner, repo string, ok bool) {
+	ri, ok := ctx.Value(repoContextKey{}).(repoInfo)
+	if !ok {
+		return "", "", false
+	}
+	return ri.Owner, ri.Repo, true
+}
 
 type GithubPrivateReleaseProxy struct {
 	client  *http.Client
@@ -18,9 +35,9 @@ type GithubPrivateReleaseProxy struct {
 	log     *slog.Logger
 }
 
-func NewGithubPrivateReleaseProxy(tokenSource oauth2.TokenSource) *GithubPrivateReleaseProxy {
+func NewGithubPrivateReleaseProxy(tm *TokenManager) *GithubPrivateReleaseProxy {
 	client := &http.Client{
-		Transport: &GithubTripper{tokenSource: tokenSource},
+		Transport: &GithubTripper{tm: tm},
 	}
 	prox := &GithubPrivateReleaseProxy{
 		client: client,
@@ -46,7 +63,8 @@ func (p *GithubPrivateReleaseProxy) taggedHandler(w http.ResponseWriter, r *http
 
 	p.log.Info("Handling request for GitHub release", "user", user, "repo", repo, "tag", tag)
 
-	files, err := p.files(r.Context(), user, repo, tag)
+	ctx := withRepo(r.Context(), user, repo)
+	files, err := p.files(ctx, user, repo, tag)
 	if err != nil {
 		p.log.Error("Error fetching release files", "error", err)
 		http.Error(w, "Error fetching release files: "+err.Error(), http.StatusInternalServerError)
@@ -55,7 +73,7 @@ func (p *GithubPrivateReleaseProxy) taggedHandler(w http.ResponseWriter, r *http
 	for _, file := range files {
 		if file.Name == tag {
 			p.log.Info("Found matching file for tag", "file", file.Name, "url", file.BrowserDownloadURL)
-			d, err := p.file(r.Context(), &file)
+			d, err := p.file(ctx, &file)
 			if err != nil {
 				p.log.Error("Error fetching file content", "error", err)
 				http.Error(w, "Error fetching file content: "+err.Error(), http.StatusInternalServerError)
@@ -75,7 +93,8 @@ func (p *GithubPrivateReleaseProxy) taggedFileHandler(w http.ResponseWriter, r *
 	file := r.PathValue("file")
 	p.log.Info("Handling request for GitHub release asset", "user", user, "repo", repo, "tag", tag, "file", file)
 
-	files, err := p.files(r.Context(), user, repo, tag)
+	ctx := withRepo(r.Context(), user, repo)
+	files, err := p.files(ctx, user, repo, tag)
 	if err != nil {
 		p.log.Error("Error fetching release files", "error", err)
 		http.Error(w, "Error fetching release files: "+err.Error(), http.StatusInternalServerError)
@@ -84,7 +103,7 @@ func (p *GithubPrivateReleaseProxy) taggedFileHandler(w http.ResponseWriter, r *
 	for _, f := range files {
 		if f.Name == file {
 			p.log.Info("Found matching file for tag", "file", f.Name, "url", f.BrowserDownloadURL)
-			d, err := p.file(r.Context(), &f)
+			d, err := p.file(ctx, &f)
 			if err != nil {
 				p.log.Error("Error fetching file content", "error", err)
 				http.Error(w, "Error fetching file content: "+err.Error(), http.StatusInternalServerError)
@@ -160,11 +179,15 @@ type githubFileAsset struct {
 }
 
 type GithubTripper struct {
-	tokenSource oauth2.TokenSource
+	tm *TokenManager
 }
 
 func (t *GithubTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	token, err := t.tokenSource.Token()
+	owner, repo, ok := repoFromContext(req.Context())
+	if !ok {
+		return nil, fmt.Errorf("no repo context set on request")
+	}
+	token, err := t.tm.TokenForRepo(owner, repo)
 	if err != nil {
 		return nil, fmt.Errorf("error getting token: %w", err)
 	}

@@ -114,12 +114,12 @@ func startProxy() (*http.Server, string, error) {
 		return nil, "", fmt.Errorf("reading private key file: %w", err)
 	}
 
-	tokenSource, err := buildTokenSource(config, privateKey)
+	tm, err := NewTokenManager(config, privateKey)
 	if err != nil {
 		return nil, "", err
 	}
 
-	han := NewGithubPrivateReleaseProxy(tokenSource)
+	han := NewGithubPrivateReleaseProxy(tm)
 
 	svr := &http.Server{
 		Addr:    config.ListenAddress,
