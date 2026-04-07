@@ -174,12 +174,12 @@ func cmdInstall(input string) error {
 
 	for _, p := range existing {
 		if p == path {
-			fmt.Printf("Path %q is already installed\n", path)
+			fmt.Fprintf(os.Stderr, "Path %q is already installed\n", path)
 			if !settingsHasProxy() {
-				fmt.Println()
-				fmt.Println("It looks like pkl-proxy rewrites are not wired into your Pkl settings.")
-				fmt.Println("Run the following to enable them:")
-				fmt.Println("  pkl-proxy settings install")
+				fmt.Fprintln(os.Stderr)
+				fmt.Fprintln(os.Stderr,"It looks like pkl-proxy rewrites are not wired into your Pkl settings.")
+				fmt.Fprintln(os.Stderr,"Run the following to enable them:")
+				fmt.Fprintln(os.Stderr,"  pkl-proxy settings install")
 			}
 			return nil
 		}
@@ -190,11 +190,11 @@ func cmdInstall(input string) error {
 		return err
 	}
 
-	fmt.Printf("Installed %q\n", path)
-	fmt.Printf("Rewrites written to %s\n", filePath)
-	fmt.Println()
-	fmt.Println("To enable rewrites in pkl, run:")
-	fmt.Println("  pkl-proxy settings install")
+	fmt.Fprintf(os.Stderr,"Installed %q\n", path)
+	fmt.Fprintf(os.Stderr,"Rewrites written to %s\n", filePath)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr,"To enable rewrites in pkl, run:")
+	fmt.Fprintln(os.Stderr,"  pkl-proxy settings install")
 	return nil
 }
 
@@ -234,7 +234,7 @@ func cmdUninstall(input string) error {
 	}
 
 	if !found {
-		fmt.Printf("Path %q is not installed\n", path)
+		fmt.Fprintf(os.Stderr,"Path %q is not installed\n", path)
 		return nil
 	}
 
@@ -242,8 +242,8 @@ func cmdUninstall(input string) error {
 		return err
 	}
 
-	fmt.Printf("Uninstalled %q\n", path)
-	fmt.Printf("Rewrites written to %s\n", filePath)
+	fmt.Fprintf(os.Stderr,"Uninstalled %q\n", path)
+	fmt.Fprintf(os.Stderr,"Rewrites written to %s\n", filePath)
 	return nil
 }
 
@@ -275,7 +275,7 @@ func cmdSettingsInstall() error {
 		if err := pklEval(filePath); err != nil {
 			return err
 		}
-		fmt.Printf("Created %s\n", filePath)
+		fmt.Fprintf(os.Stderr,"Created %s\n", filePath)
 		return nil
 	}
 
@@ -287,7 +287,7 @@ func cmdSettingsInstall() error {
 	content := string(data)
 
 	if strings.Contains(content, "pklProxy.rewrites") {
-		fmt.Println("pkl-proxy rewrites are already configured in settings.pkl")
+		fmt.Fprintln(os.Stderr,"pkl-proxy rewrites are already configured in settings.pkl")
 		// Still check for conflicts
 		return warnConflicts(filePath, content)
 	}
@@ -333,7 +333,7 @@ func cmdSettingsInstall() error {
 		return fmt.Errorf("settings.pkl is invalid after modification (restored original):\n%w", err)
 	}
 
-	fmt.Printf("Updated %s\n", filePath)
+	fmt.Fprintf(os.Stderr,"Updated %s\n", filePath)
 	return warnConflicts(filePath, content)
 }
 
@@ -346,7 +346,7 @@ func cmdSettingsUninstall() error {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Println("No settings.pkl found, nothing to do")
+			fmt.Fprintln(os.Stderr,"No settings.pkl found, nothing to do")
 			return nil
 		}
 		return fmt.Errorf("reading settings.pkl: %w", err)
@@ -354,7 +354,7 @@ func cmdSettingsUninstall() error {
 
 	content := string(data)
 	if !strings.Contains(content, "pklProxy") {
-		fmt.Println("pkl-proxy is not configured in settings.pkl")
+		fmt.Fprintln(os.Stderr,"pkl-proxy is not configured in settings.pkl")
 		return nil
 	}
 
@@ -392,7 +392,7 @@ func cmdSettingsUninstall() error {
 		return fmt.Errorf("settings.pkl is invalid after modification (restored original):\n%w", err)
 	}
 
-	fmt.Printf("Removed pkl-proxy rewrites from %s\n", filePath)
+	fmt.Fprintf(os.Stderr,"Removed pkl-proxy rewrites from %s\n", filePath)
 	return nil
 }
 
@@ -433,10 +433,10 @@ func warnConflicts(filePath, content string) error {
 	}
 
 	if len(conflicts) > 0 {
-		fmt.Printf("\nWarning: %s contains manual rewrite entries that will conflict with pkl-proxy managed rewrites.\n", filePath)
-		fmt.Println("Please remove these lines to avoid duplicate key errors:")
+		fmt.Fprintf(os.Stderr,"\nWarning: %s contains manual rewrite entries that will conflict with pkl-proxy managed rewrites.\n", filePath)
+		fmt.Fprintln(os.Stderr,"Please remove these lines to avoid duplicate key errors:")
 		for _, c := range conflicts {
-			fmt.Printf("  %s = ...\n", c)
+			fmt.Fprintf(os.Stderr,"  %s = ...\n", c)
 		}
 		return fmt.Errorf("resolve conflicts in %s before continuing", filePath)
 	}

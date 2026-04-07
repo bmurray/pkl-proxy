@@ -14,6 +14,20 @@ import (
 )
 
 func main() {
+	// Strip -v / --verbose from os.Args before command parsing
+	var filtered []string
+	filtered = append(filtered, os.Args[0])
+	for _, arg := range os.Args[1:] {
+		if arg == "-v" || arg == "--verbose" {
+			verbose = true
+		} else {
+			filtered = append(filtered, arg)
+		}
+	}
+	os.Args = filtered
+
+	initLogger()
+
 	if len(os.Args) < 2 {
 		usage()
 	}
@@ -21,74 +35,77 @@ func main() {
 	switch os.Args[1] {
 	case "install":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: pkl-proxy install <github-path>")
+			fmt.Fprintln(os.Stderr, "Usage: pkl-proxy install <github-path>")
 			os.Exit(1)
 		}
 		if err := cmdInstall(os.Args[2]); err != nil {
-			fmt.Println("Error:", err)
+			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)
 		}
 	case "uninstall":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: pkl-proxy uninstall <github-path>")
+			fmt.Fprintln(os.Stderr, "Usage: pkl-proxy uninstall <github-path>")
 			os.Exit(1)
 		}
 		if err := cmdUninstall(os.Args[2]); err != nil {
-			fmt.Println("Error:", err)
+			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)
 		}
 	case "settings":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: pkl-proxy settings <install|uninstall>")
+			fmt.Fprintln(os.Stderr, "Usage: pkl-proxy settings <install|uninstall>")
 			os.Exit(1)
 		}
 		switch os.Args[2] {
 		case "install":
 			if err := cmdSettingsInstall(); err != nil {
-				fmt.Println("Error:", err)
+				fmt.Fprintln(os.Stderr, "Error:", err)
 				os.Exit(1)
 			}
 		case "uninstall":
 			if err := cmdSettingsUninstall(); err != nil {
-				fmt.Println("Error:", err)
+				fmt.Fprintln(os.Stderr, "Error:", err)
 				os.Exit(1)
 			}
 		default:
-			fmt.Println("Usage: pkl-proxy settings <install|uninstall>")
+			fmt.Fprintln(os.Stderr, "Usage: pkl-proxy settings <install|uninstall>")
 			os.Exit(1)
 		}
 	case "daemon":
 		if err := cmdDaemon(); err != nil {
-			fmt.Println("Error:", err)
+			logError("Error: %v", err)
 			os.Exit(1)
 		}
 	case "run":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: pkl-proxy run <cmd> [args...]")
+			fmt.Fprintln(os.Stderr, "Usage: pkl-proxy run <cmd> [args...]")
 			os.Exit(1)
 		}
 		if err := cmdRun(os.Args[2:]); err != nil {
-			fmt.Println("Error:", err)
+			logError("Error: %v", err)
 			os.Exit(1)
 		}
 	default:
 		// Treat as implicit "run" for backwards compatibility
 		if err := cmdRun(os.Args[1:]); err != nil {
-			fmt.Println("Error:", err)
+			logError("Error: %v", err)
 			os.Exit(1)
 		}
 	}
 }
 
 func usage() {
-	fmt.Println("Usage: pkl-proxy <command> [args...]")
-	fmt.Println("Commands:")
-	fmt.Println("  install <path>      Add a GitHub path to proxy rewrites")
-	fmt.Println("  uninstall <path>    Remove a GitHub path from proxy rewrites")
-	fmt.Println("  settings install    Add pkl-proxy rewrites to ~/.pkl/settings.pkl")
-	fmt.Println("  settings uninstall  Remove pkl-proxy rewrites from ~/.pkl/settings.pkl")
-	fmt.Println("  daemon              Start proxy in daemon mode")
-	fmt.Println("  run <cmd> [args]    Start proxy and run a command")
+	fmt.Fprintln(os.Stderr, "Usage: pkl-proxy [-v|--verbose] <command> [args...]")
+	fmt.Fprintln(os.Stderr, "Commands:")
+	fmt.Fprintln(os.Stderr, "  install <path>      Add a GitHub path to proxy rewrites")
+	fmt.Fprintln(os.Stderr, "  uninstall <path>    Remove a GitHub path from proxy rewrites")
+	fmt.Fprintln(os.Stderr, "  settings install    Add pkl-proxy rewrites to ~/.pkl/settings.pkl")
+	fmt.Fprintln(os.Stderr, "  settings uninstall  Remove pkl-proxy rewrites from ~/.pkl/settings.pkl")
+	fmt.Fprintln(os.Stderr, "  daemon              Start proxy in daemon mode")
+	fmt.Fprintln(os.Stderr, "  run <cmd> [args]    Start proxy and run a command")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Flags:")
+	fmt.Fprintln(os.Stderr, "  -v, --verbose       Enable verbose output")
 	os.Exit(1)
 }
 
@@ -132,9 +149,9 @@ func startProxy() (*http.Server, string, error) {
 	}
 
 	go func() {
-		fmt.Printf("Starting local HTTP server on %s...\n", config.ListenAddress)
+		logInfo("Starting local HTTP server on %s...", config.ListenAddress)
 		if err := svr.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			fmt.Println("Error starting HTTP server:", err)
+			logError("Error starting HTTP server: %v", err)
 		}
 	}()
 
@@ -156,7 +173,7 @@ func cmdDaemon() error {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	s := <-sig
-	fmt.Printf("\nReceived %s, shutting down...\n", s)
+	logInfo("\nReceived %s, shutting down...", s)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

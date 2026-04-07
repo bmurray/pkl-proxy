@@ -48,13 +48,13 @@ func NewTokenManager(config *appconfig.AppConfig, privateKey []byte) (*TokenMana
 	// Print available installations at startup for diagnostics
 	installations, err := discoverInstallations(appTokenSource)
 	if err != nil {
-		fmt.Printf("Warning: could not list installations: %v\n", err)
+		logWarn("Warning: could not list installations: %v", err)
 	} else if len(installations) == 0 {
-		fmt.Println("Warning: no installations found; install the GitHub App on an account first")
+		logWarn("Warning: no installations found; install the GitHub App on an account first")
 	} else {
-		fmt.Println("Available installations:")
+		logInfo("Available installations:")
 		for _, inst := range installations {
-			fmt.Printf("  - %s (installation ID: %d)\n", inst.Account.Login, inst.ID)
+			logInfo("  - %s (installation ID: %d)", inst.Account.Login, inst.ID)
 		}
 	}
 
@@ -137,7 +137,7 @@ func (tm *TokenManager) lookupRepoInstallation(owner, repo string) (int, error) 
 		return 0, fmt.Errorf("decoding installation response: %w", err)
 	}
 
-	fmt.Printf("Discovered installation %d (%s) for %s/%s\n", inst.ID, inst.Account.Login, owner, repo)
+	logInfo("Discovered installation %d (%s) for %s/%s", inst.ID, inst.Account.Login, owner, repo)
 	return inst.ID, nil
 }
 
